@@ -57,7 +57,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_videos_chat_uploader
         ON videos (chat_id, first_uploader_id)
         """)
-        # 채팅별 메타 정보
         conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_meta (
             chat_id         INTEGER PRIMARY KEY,
@@ -222,10 +221,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setbaseline 350 (관리자) — 봇 이전 누적 보정치 설정\n"
         "/roomcount — 방 시작~현재 총합 = baseline + 이후분\n"
         "/latest — 마지막 업로드 시각 + 현재 누적\n"
-        "/ping — (관리자) 연결 점검"
+        "/ping — (관리자) 연결 점검\n"
+        "/help — 이 안내문"
     )
     if chat:
         await context.bot.send_message(chat_id=chat.id, text=txt)
+
+# =========================
+# /help
+# =========================
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📌 명령어 안내\n\n"
+        "📊 집계\n"
+        "/mycount — 내 전체 누적(봇 이후)\n"
+        "/count — 대상 메시지에 '답장' 후 실행 → 그 사람 누적(봇 이후)\n"
+        "/groupcount — 그룹 전체 누적(봇 이후)\n"
+        "/top — 업로더 Top 10\n\n"
+        "📅 자동 주기\n"
+        "/setanchor 8/08 — 기준 시작일 설정 (관리자)\n"
+        "/setcyclelen 8 — 주기 길이(일) 설정 (관리자)\n"
+        "/cycle — 현재 주기(KST) 표시\n"
+        "/weekmy — 이번 주기 내 내 업로드 수\n"
+        "/weekgroup — 이번 주기 그룹 업로드 총합\n\n"
+        "🏠 방 전체 집계\n"
+        "/setroomstart YYYY-MM-DD — 영상방 시작일 설정 (관리자)\n"
+        "/setbaseline 숫자 — 봇 이전 누적 보정치 (관리자)\n"
+        "/roomcount — 방 시작~현재 총합 (= baseline + 이후)\n"
+        "/latest — 마지막 업로드 시각 + 현재 누적\n\n"
+        "🔧 기타\n"
+        "/ping — 연결 점검 (관리자)\n"
+        "/help — 이 안내문"
+    )
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text)
 
 # =========================
 # 기본 집계 명령
@@ -319,8 +347,11 @@ async def setanchor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         cur_anchor, cur_len = get_anchor_and_len(conn, chat.id)
         set_anchor_and_len(conn, chat.id, anchor_ts, cur_len or 8)
-    await context.bot.send_message(chat_id=chat.id, text=f"앵커를 {from_epoch_kst(anchor_ts):%Y-%m-%d} (KST)로 설정했습니다.\n"
-                                                         f"이 날짜를 기준으로 {cur_len or 8}일 주기를 자동 계산합니다.")
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=f"앵커를 {from_epoch_kst(anchor_ts):%Y-%m-%d} (KST)로 설정했습니다.\n"
+             f"이 날짜를 기준으로 {cur_len or 8}일 주기를 자동 계산합니다."
+    )
 
 async def setcyclelen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat, user = update.effective_chat, update.effective_user
@@ -382,8 +413,11 @@ async def weekmy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         s_kst, e_kst = current_cycle_bounds(anchor_ts, days)
         c = count_in_period(conn, chat.id, to_epoch(s_kst), to_epoch(e_kst), user_id=user.id)
-    await context.bot.send_message(chat_id=chat.id, text=f"{get_username(user) or user.id} 님의 이번 주기 업로드 수: {c}\n"
-                                                         f"기간: {s_kst:%Y-%m-%d} ~ {e_kst:%Y-%m-%d} (KST)")
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=f"{get_username(user) or user.id} 님의 이번 주기 업로드 수: {c}\n"
+             f"기간: {s_kst:%Y-%m-%d} ~ {e_kst:%Y-%m-%d} (KST)"
+    )
 
 async def weekgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -398,8 +432,10 @@ async def weekgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         s_kst, e_kst = current_cycle_bounds(anchor_ts, days)
         c = count_in_period(conn, chat.id, to_epoch(s_kst), to_epoch(e_kst))
-    await context.bot.send_message(chat_id=chat.id, text=f"이번 주기 그룹 업로드 총합: {c}\n"
-                                                         f"기간: {s_kst:%Y-%m-%d} ~ {e_kst:%Y-%m-%d} (KST)")
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=f"이번 주기 그룹 업로드 총합: {c}\n기간: {s_kst:%Y-%m-%d} ~ {e_kst:%Y-%m-%d} (KST)"
+    )
 
 # =========================
 # 방 시작/베이스라인/누적/최근
@@ -572,32 +608,43 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(chat_id=chat.id, text=text)
 
 # =========================
+# 명령어 등록 헬퍼 (대/소문자 모두 인식)
+# =========================
+def add_cmd(app: Application, name_or_list, func):
+    names = [name_or_list] if isinstance(name_or_list, str) else list(name_or_list)
+    variants = []
+    for n in names:
+        variants.extend({n, n.lower(), n.capitalize()})
+    app.add_handler(CommandHandler(variants, func))
+
+# =========================
 # main
 # =========================
 def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # 기본 명령
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))  # 관리자 전용
-    app.add_handler(CommandHandler("mycount", mycount))
-    app.add_handler(CommandHandler("count", count_user))
-    app.add_handler(CommandHandler("groupcount", groupcount))
-    app.add_handler(CommandHandler("top", top))
+    # 기본/도움말
+    add_cmd(app, "start", start)
+    add_cmd(app, "help", help_command)
 
-    # 자동 주기 명령
-    app.add_handler(CommandHandler("setanchor", setanchor))      # 관리자: 기준 시작일
-    app.add_handler(CommandHandler("setcyclelen", setcyclelen))  # 관리자: 주기 길이(일)
-    app.add_handler(CommandHandler("cycle", cycle))              # 현재 주기 보기
-    app.add_handler(CommandHandler("weekmy", weekmy))            # 이번 주기 내 개인
-    app.add_handler(CommandHandler("weekgroup", weekgroup))      # 이번 주기 내 그룹
+    # 관리자 전용
+    add_cmd(app, "ping", ping)
+    add_cmd(app, "setanchor", setanchor)
+    add_cmd(app, "setcyclelen", setcyclelen)
+    add_cmd(app, "setroomstart", setroomstart)
+    add_cmd(app, "setbaseline", setbaseline)
 
-    # 방 시작/베이스라인/누적/최근
-    app.add_handler(CommandHandler("setroomstart", setroomstart))  # 관리자
-    app.add_handler(CommandHandler("setbaseline", setbaseline))    # 관리자
-    app.add_handler(CommandHandler("roomcount", roomcount))
-    app.add_handler(CommandHandler("latest", latest))
+    # 조회/집계
+    add_cmd(app, "cycle", cycle)
+    add_cmd(app, "weekmy", weekmy)
+    add_cmd(app, "weekgroup", weekgroup)
+    add_cmd(app, "mycount", mycount)
+    add_cmd(app, "count", count_user)
+    add_cmd(app, "groupcount", groupcount)
+    add_cmd(app, "top", top)
+    add_cmd(app, "roomcount", roomcount)
+    add_cmd(app, "latest", latest)
 
     # 상태 업데이트
     app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, handle_migrate))
@@ -612,3 +659,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
